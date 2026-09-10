@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exposure Log — Photo Metadata Examiner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.js"></script>
+<style>
+  :root {
+    --bg: #0F1113;
+    --surface: #17191C;
+    --surface-2: #1D2023;
+    --border: #2A2E33;
+    --border-strong: #3E4349;
+    --text: #ECEEF0;
+    --text-soft: #8B929A;
+    --text-faint: #565C63;
+    --accent: #FF6B35;
+    --accent-soft: rgba(255, 107, 53, 0.14);
+    --safe: #4FC9A5;
+    --safe-soft: rgba(79, 201, 165, 0.12);
+
+    --font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    --font-mono: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-display);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body { padding: 48px 24px 64px; }
+
+  .page { max-width: 880px; margin: 0 auto; }
+
+  /* ---------- Header ---------- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 40px;
+  }
+
+  header .logo { flex: 0 0 auto; }
+
+  header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+
+  header p {
+    margin: 3px 0 0 0;
+    font-size: 14px;
+    color: var(--text-soft);
+    line-height: 1.4;
+  }
+
+  /* ---------- Viewfinder ---------- */
+  .viewfinder {
+    position: relative;
+    background: radial-gradient(ellipse at center, var(--surface-2) 0%, var(--surface) 75%);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    overflow: hidden;
+  }
+
+  .bracket {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    border: 2px solid var(--border-strong);
+    transition: border-color 0.25s ease;
+  }
+  .bracket.tl { top: 14px; left: 14px; border-right: none; border-bottom: none; border-radius: 6px 0 0 0; }
+  .bracket.tr { top: 14px; right: 14px; border-left: none; border-bottom: none; border-radius: 0 6px 0 0; }
+  .bracket.bl { bottom: 14px; left: 14px; border-right: none; border-top: none; border-radius: 0 0 0 6px; }
+  .bracket.br { bottom: 14px; right: 14px; border-left: none; border-top: none; border-radius: 0 0 6px 0; }
+
+  .viewfinder.locked .bracket { border-color: var(--accent); }
+
+  label.dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    text-align: center;
+    z-index: 1;
+  }
+
+  .idle-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .idle-dot { animation: none; }
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.4); }
+  }
+
+  label.dropzone .primary {
+    font-size: 15px;
+    color: var(--text);
+  }
+
+  label.dropzone .secondary {
+    font-size: 13px;
+    color: var(--text-soft);
+  }
+
+  .browse-btn {
+    margin-top: 4px;
+    padding: 9px 20px;
+    background: var(--accent);
+    color: #1a0e07;
+    font-family: var(--font-display);
+    font-size: 13.5px;
+    font-weight: 700;
+    border: none;
+    border-radius: 7px;
+  }
+
+  #fileInput {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+  }
+
+  .photo-wrap {
+    display: none;
+    width: 100%;
+    z-index: 1;
+  }
+  .photo-wrap.visible { display: block; }
+
+  .photo-wrap img {
+    display: block;
+    width: 100%;
+    max-height: 380px;
+    object-fit: contain;
+    border-radius: 4px;
+  }
+
+  .filename-tag {
+    margin-top: 12px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--text-soft);
+    word-break: break-all;
+    text-align: center;
+  }
+
+  .reset-row {
+    display: flex;
+    justify-content: center;
+    margin-top: 18px;
+  }
+
+  .reset-btn {
+    display: none;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-soft);
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  .reset-btn.visible { display: inline-block; }
+  .reset-btn:hover { border-color: var(--accent); color: var(--text); }
+
+  .error-notice {
+    display: none;
+    margin-top: 16px;
+    border: 1px solid var(--accent);
+    background: var(--accent-soft);
+    color: var(--text);
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 13.5px;
+  }
+  .error-notice.visible { display: block; }
+
+  /* ---------- Exposure hero ---------- */
+  .exposure-hero {
+    display: none;
+    margin-top: 32px;
+    padding: 22px 8px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .exposure-hero.visible {
+    display: flex;
+    animation: reveal 0.35s ease;
+  }
+
+  @keyframes reveal {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .exposure-hero.visible { animation: none; }
+  }
+
+  .exposure-hero { justify-content: space-around; text-align: center; }
+
+  .stat .num {
+    font-family: var(--font-mono);
+    font-size: clamp(22px, 4vw, 30px);
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .stat .num.empty { color: var(--text-faint); }
+
+  .stat .cap {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-soft);
+  }
+
+  /* ---------- Detail grid ---------- */
+  .details {
+    display: none;
+    margin-top: 28px;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .details.visible { display: grid; animation: reveal 0.4s ease; }
+  @media (prefers-reduced-motion: reduce) { .details.visible { animation: none; } }
+  @media (max-width: 640px) { .details { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+
+  .panel h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 12px 0;
+  }
+
+  .panel .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13.5px;
+  }
+  .panel .row:last-child { border-bottom: none; }
+
+  .panel .row .label { color: var(--text-soft); }
+  .panel .row .value {
+    font-family: var(--font-mono);
+    text-align: right;
+    word-break: break-word;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 5px 10px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+  }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .badge.flag { background: var(--accent-soft); color: var(--accent); }
+  .badge.flag .dot { background: var(--accent); }
+  .badge.safe { background: var(--safe-soft); color: var(--safe); }
+  .badge.safe .dot { background: var(--safe); }
+
+  .maps-link {
+    display: inline-block;
+    margin-top: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .notice {
+    grid-column: 1 / -1;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 13.5px;
+    color: var(--text-soft);
+    line-height: 1.5;
+  }
+
+  .empty-details {
+    display: block;
+    margin-top: 28px;
+    text-align: center;
+    font-size: 13.5px;
+    color: var(--text-faint);
+  }
+  .empty-details.hidden { display: none; }
+
+  footer {
+    margin-top: 44px;
+    border-top: 1px solid var(--border);
+    padding-top: 18px;
+    font-size: 12.5px;
+    color: var(--text-faint);
+    line-height: 1.6;
+    text-align: center;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="logo">
+      <svg width="30" height="30" viewBox="0 0 28 28" fill="none">
+        <circle cx="14" cy="14" r="12" stroke="#FF6B35" stroke-width="2"/>
+        <circle cx="14" cy="14" r="4" fill="#FF6B35"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Exposure Log</h1>
+      <p>See exactly what a photo reveals about itself — camera, timing, and sometimes its exact location.</p>
+    </div>
+  </header>
+
+  <div class="viewfinder" id="viewfinder">
+    <div class="bracket tl"></div>
+    <div class="bracket tr"></div>
+    <div class="bracket bl"></div>
+    <div class="bracket br"></div>
+
+    <label class="dropzone" id="dropzone" for="fileInput">
+      <span class="idle-dot"></span>
+      <span class="primary">Drop a photo here</span>
+      <span class="secondary">or choose a file from your device</span>
+      <span class="browse-btn">Choose a photo</span>
+      <input type="file" id="fileInput" accept="image/*">
+    </label>
+
+    <div class="photo-wrap" id="photoWrap">
+      <img id="previewImg" alt="Uploaded photo preview">
+    </div>
+  </div>
+
+  <div class="filename-tag" id="filenameTag"></div>
+
+  <div class="reset-row">
+    <button class="reset-btn" id="resetBtn">Examine another photo</button>
+  </div>
+
+  <div class="error-notice" id="errorNotice"></div>
+
+  <div class="exposure-hero" id="exposureHero">
+    <div class="stat"><div class="num" id="statAperture">—</div><div class="cap">Aperture</div></div>
+    <div class="stat"><div class="num" id="statShutter">—</div><div class="cap">Shutter speed</div></div>
+    <div class="stat"><div class="num" id="statIso">—</div><div class="cap">ISO</div></div>
+  </div>
+
+  <div class="empty-details" id="emptyDetails">Upload a photo above to see its metadata.</div>
+
+  <div class="details" id="details"></div>
+
+  <footer>
+    Everything runs in your browser. The photo is never uploaded or sent anywhere — metadata is read locally on your device.<br>
+    Built for a quick look, not for legal chain-of-custody use.
+  </footer>
+
+</div>
+
+<script>
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const viewfinder = document.getElementById('viewfinder');
+  const photoWrap = document.getElementById('photoWrap');
+  const previewImg = document.getElementById('previewImg');
+  const filenameTag = document.getElementById('filenameTag');
+  const resetBtn = document.getElementById('resetBtn');
+  const errorNotice = document.getElementById('errorNotice');
+  const exposureHero = document.getElementById('exposureHero');
+  const emptyDetails = document.getElementById('emptyDetails');
+  const details = document.getElementById('details');
+
+  let currentUrl = null;
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files && fileInput.files[0]) handleFile(fileInput.files[0]);
+  });
+
+  ['dragenter', 'dragover'].forEach(evt =>
+    viewfinder.addEventListener(evt, e => { e.preventDefault(); })
+  );
+  viewfinder.addEventListener('drop', e => {
+    e.preventDefault();
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  resetBtn.addEventListener('click', () => {
+    fileInput.value = '';
+    dropzone.style.display = 'flex';
+    photoWrap.classList.remove('visible');
+    viewfinder.classList.remove('locked');
+    filenameTag.textContent = '';
+    resetBtn.classList.remove('visible');
+    errorNotice.classList.remove('visible');
+    exposureHero.classList.remove('visible');
+    details.classList.remove('visible');
+    emptyDetails.classList.remove('hidden');
+    if (currentUrl) URL.revokeObjectURL(currentUrl);
+  });
+
+  function handleFile(file) {
+    errorNotice.classList.remove('visible');
+
+    if (!file.type || !file.type.startsWith('image/')) {
+      errorNotice.textContent = "That file doesn't look like an image. Try a JPEG, PNG, HEIC, or similar photo file.";
+      errorNotice.classList.add('visible');
+      return;
+    }
+
+    if (currentUrl) URL.revokeObjectURL(currentUrl);
+    currentUrl = URL.createObjectURL(file);
+    previewImg.src = currentUrl;
+    dropzone.style.display = 'none';
+    photoWrap.classList.add('visible');
+    viewfinder.classList.add('locked');
+    filenameTag.textContent = file.name;
+    resetBtn.classList.add('visible');
+
+    let naturalDims = null;
+    previewImg.onload = () => {
+      naturalDims = { w: previewImg.naturalWidth, h: previewImg.naturalHeight };
+    };
+
+    try {
+      EXIF.getData(file, function () {
+        const tags = EXIF.getAllTags(this) || {};
+        renderReport(tags, file, naturalDims);
+      });
+    } catch (err) {
+      renderReport({}, file, naturalDims);
+    }
+  }
+
+  function humanSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    const units = ['KB', 'MB', 'GB'];
+    let val = bytes, i = -1;
+    do { val /= 1024; i++; } while (val >= 1024 && i < units.length - 1);
+    return val.toFixed(1) + ' ' + units[i];
+  }
+
+  function formatExifDate(str) {
+    if (!str) return null;
+    const [datePart, timePart] = str.split(' ');
+    if (!datePart) return str;
+    const [y, mo, d] = datePart.split(':').map(Number);
+    if (!y || !mo || !d) return str;
+    const out = new Date(y, mo - 1, d);
+    if (timePart) {
+      const [h, mi, se] = timePart.split(':').map(Number);
+      out.setHours(h || 0, mi || 0, se || 0);
+    }
+    return out.toLocaleString(undefined, {
+      year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit'
+    });
+  }
+
+  function formatExposure(exp) {
+    if (!exp) return null;
+    if (exp < 1) return '1/' + Math.round(1 / exp) + 's';
+    return exp + 's';
+  }
+
+  function dmsToDecimal(dms, ref) {
+    if (!dms || dms.length < 3) return null;
+    const [d, m, s] = dms;
+    let dec = d + m / 60 + s / 3600;
+    if (ref === 'S' || ref === 'W') dec *= -1;
+    return dec;
+  }
+
+  function row(label, value) {
+    if (value === null || value === undefined || value === '') return '';
+    return `<div class="row"><span class="label">${label}</span><span class="value">${value}</span></div>`;
+  }
+
+  function renderReport(tags, file, naturalDims) {
+    emptyDetails.classList.add('hidden');
+
+    // Exposure hero
+    document.getElementById('statAperture').textContent = tags.FNumber ? 'f/' + tags.FNumber : '—';
+    document.getElementById('statAperture').classList.toggle('empty', !tags.FNumber);
+    const shutter = formatExposure(tags.ExposureTime);
+    document.getElementById('statShutter').textContent = shutter || '—';
+    document.getElementById('statShutter').classList.toggle('empty', !shutter);
+    document.getElementById('statIso').textContent = tags.ISOSpeedRatings || '—';
+    document.getElementById('statIso').classList.toggle('empty', !tags.ISOSpeedRatings);
+    exposureHero.classList.add('visible');
+
+    const cameraRows = [
+      row('Make', tags.Make),
+      row('Model', tags.Model),
+      row('Lens', tags.LensModel),
+      row('Captured', formatExifDate(tags.DateTimeOriginal || tags.DateTime)),
+      row('Focal length', tags.FocalLength ? tags.FocalLength + ' mm' : null),
+      row('Software', tags.Software),
+    ].join('');
+
+    const width = tags.PixelXDimension || (naturalDims && naturalDims.w);
+    const height = tags.PixelYDimension || (naturalDims && naturalDims.h);
+
+    const fileRows = [
+      row('Name', file.name),
+      row('Type', file.type || 'unknown'),
+      row('Size', humanSize(file.size)),
+      row('Dimensions', width && height ? width + ' \u00d7 ' + height + ' px' : null),
+      row('Saved to device', file.lastModified ? new Date(file.lastModified).toLocaleString(undefined, { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null),
+    ].join('');
+
+    let locationBlock = '';
+    const lat = dmsToDecimal(tags.GPSLatitude, tags.GPSLatitudeRef);
+    const lon = dmsToDecimal(tags.GPSLongitude, tags.GPSLongitudeRef);
+
+    if (lat !== null && lon !== null) {
+      const mapsUrl = 'https://www.google.com/maps?q=' + lat.toFixed(6) + ',' + lon.toFixed(6);
+      locationBlock = `
+        <div class="panel">
+          <span class="badge flag"><span class="dot"></span>Location recorded</span>
+          ${row('Coordinates', lat.toFixed(6) + ', ' + lon.toFixed(6))}
+          ${tags.GPSAltitude ? row('Altitude', Math.round(tags.GPSAltitude) + ' m') : ''}
+          <a class="maps-link" href="${mapsUrl}" target="_blank" rel="noopener">Open in Maps</a>
+        </div>
+      `;
+    } else {
+      locationBlock = `
+        <div class="panel">
+          <span class="badge safe"><span class="dot"></span>No location recorded</span>
+        </div>
+      `;
+    }
+
+    const hasCameraData = tags.Make || tags.Model || tags.DateTimeOriginal || tags.DateTime;
+    let noticeBlock = '';
+    if (!hasCameraData && lat === null) {
+      noticeBlock = `
+        <div class="notice">
+          This file carries no embedded camera metadata. Many apps — Instagram, WhatsApp, X, and most screenshot tools — strip this out before the photo ever reaches you.
+        </div>
+      `;
+    }
+
+    details.innerHTML = `
+      <div class="panel">
+        <h3>Camera</h3>
+        ${cameraRows || '<div class="row"><span class="label">No camera fields found</span></div>'}
+      </div>
+      ${locationBlock}
+      <div class="panel">
+        <h3>File</h3>
+        ${fileRows}
+      </div>
+      ${noticeBlock}
+    `;
+    details.classList.add('visible');
+  }
+</script>
+</body>
+</html>
